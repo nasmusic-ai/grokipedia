@@ -582,27 +582,29 @@ function switchTab(tab){
 // ── FETCH ────────────────────────────────────────────
 var curTitle='',curText='';
 
+// ✅ FREE: Google Gemini API — get your free key at https://aistudio.google.com
+var GEMINI_KEY='AIzaSyBJmAGpQu8vZ1VGEhKQUmt-lIziwDs_Ees';
+
 async function fetchR(q){
   var prompt='You are Grokipedia. Return ONLY raw JSON (no markdown, no code fences). Schema: {"title":"string","meta":"string","summary":"string","article":"string with paragraphs separated by double newline","imageQueries":["s","s","s","s","s","s"],"videoTitles":["s","s","s"],"relatedTopics":[{"title":"s","snippet":"s"},{"title":"s","snippet":"s"},{"title":"s","snippet":"s"}]}';
   try{
-    var res=await fetch('https://api.anthropic.com/v1/messages',{
+    var res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key='+GEMINI_KEY,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:1000,
-        system:prompt,
-        messages:[{role:'user',content:'Grokipedia article: '+q}]
+        contents:[{parts:[{text:prompt+'\n\nGrokipedia article: '+q}]}],
+        generationConfig:{maxOutputTokens:1000,temperature:0.7}
       })
     });
     var data=await res.json();
-    var raw=(data.content||[]).map(function(c){return c.text||'';}).join('').trim();
+    var raw=((data.candidates||[])[0]||{}).content;
+    raw=((raw&&raw.parts)||[]).map(function(p){return p.text||'';}).join('').trim();
     // strip any accidental fences
     raw=raw.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'').trim();
     var d=JSON.parse(raw);
     renderR(d,q);
   }catch(err){
-    renderR({title:q,meta:'Grokipedia',summary:'Unable to load content. Please check your connection.',article:'',imageQueries:[q,q+' photo',q+' landscape',q+' nature',q+' science'],videoTitles:[q+' explained',q+' overview',q+' documentary'],relatedTopics:[]},q);
+    renderR({title:q,meta:'Grokipedia',summary:'Unable to load content. Please check your internet connection and ensure your Gemini API key is set.',article:'',imageQueries:[q,q+' photo',q+' landscape',q+' nature',q+' science'],videoTitles:[q+' explained',q+' overview',q+' documentary'],relatedTopics:[]},q);
   }
 }
 
@@ -639,7 +641,8 @@ function buildGrid(cont,queries){
   cont.innerHTML='';
   var seeds=[42,17,83,56,29,71];
   queries.forEach(function(q,i){
-    var url='https://source.unsplash.com/400x400/?'+encodeURIComponent(q)+'&sig='+seeds[i];
+    // ✅ FREE: Picsum Photos — no API key needed
+    var url='https://picsum.photos/seed/'+encodeURIComponent(q)+seeds[i]+'/400/400';
     var cell=document.createElement('div');cell.className='icell';
     var shim=document.createElement('div');shim.className='shim';
     var img=document.createElement('img');img.loading='lazy';img.alt=q;
@@ -662,7 +665,8 @@ function buildVidList(cont,titles){
   var seeds=[200,210,220,230,240];
   titles.forEach(function(t,i){
     var yt='https://www.youtube.com/results?search_query='+encodeURIComponent(t);
-    var tu='https://source.unsplash.com/300x170/?'+encodeURIComponent(t.split(' ').slice(0,3).join(' '))+'&sig='+seeds[i];
+    // ✅ FREE: Picsum Photos — no API key needed
+    var tu='https://picsum.photos/seed/'+encodeURIComponent(t.split(' ').slice(0,3).join('-'))+seeds[i]+'/300/170';
     var a=document.createElement('a');a.className='vc';a.href=yt;a.target='_blank';a.rel='noopener noreferrer';
     var td=document.createElement('div');td.className='vt';
     var ti=document.createElement('img');ti.loading='lazy';ti.alt='';
@@ -1039,18 +1043,21 @@ async function handleVoiceQuery(q){
   var sys='You are Smile, an intelligent voice assistant for Grokipedia \u2014 the AI-powered living encyclopedia. You answer questions conversationally with rich knowledge about any topic. Keep spoken answers under 80 words unless the user asks for more detail. Be warm, clear, and encyclopedic. Do not use markdown symbols in your response as it will be read aloud.';
 
   try{
-    var res=await fetch('https://api.anthropic.com/v1/messages',{
+    // Build Gemini-compatible conversation (system prompt prepended to first user turn)
+    var gemMsgs=vpConvHistory.map(function(m,i){
+      return {role:m.role==='assistant'?'model':'user',parts:[{text:(i===0?sys+'\n\n':'')+m.content}]};
+    });
+    var res=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key='+GEMINI_KEY,{
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',
-        max_tokens:300,
-        system:sys,
-        messages:vpConvHistory
+        contents:gemMsgs,
+        generationConfig:{maxOutputTokens:300,temperature:0.8}
       })
     });
     var data=await res.json();
-    var reply=(data.content||[]).map(function(c){return c.text||'';}).join('')||'I could not process that. Please try again.';
+    var reply=(((data.candidates||[])[0]||{}).content||{}).parts;
+    reply=(reply||[]).map(function(p){return p.text||'';}).join('')||'I could not process that. Please try again.';
     vpConvHistory.push({role:'assistant',content:reply});
     addVPMsg('bot',reply);
     speak(reply);
